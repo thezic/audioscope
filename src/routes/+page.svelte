@@ -2,24 +2,25 @@
 	import MicrophoneSelector from '$lib/components/MicrophoneSelector.svelte';
 	import { onMount } from 'svelte';
 
-	let audioContext: AudioContext;
-	let analyzer: AnalyserNode;
+	let audioContext = $state<AudioContext>();
+	let analyzer = $state<AnalyserNode>();
+	const fftSize = 2048;
 
 	onMount(() => {
 		audioContext = new AudioContext();
 		analyzer = audioContext.createAnalyser();
-		analyzer.fftSize = 2048;
+		analyzer.fftSize = fftSize;
 	});
 
 	let isRunning = $state(false);
 	let canvas = $state<HTMLCanvasElement>();
 	let canvasCtx = $derived(canvas?.getContext('2d'));
 
-	// let micSource = $state<MediaStreamAudioSourceNode>();
-	let micSource: MediaStreamAudioSourceNode | undefined;
+	let micSource = $state<MediaStreamAudioSourceNode>();
 	let microphoneId = $state<string>();
 
 	async function start() {
+		if (!audioContext || !analyzer) return;
 		const stream = await navigator.mediaDevices.getUserMedia({
 			audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
 			video: false
@@ -29,52 +30,46 @@
 		audioContext.resume();
 
 		isRunning = true;
-
-		console.log('start', 'stream', stream, 'micSource', micSource, 'analyzer', analyzer);
 	}
 
 	function stop() {
-		console.log('stop');
+		if (!audioContext || !analyzer) return;
 		if (micSource) {
-			console.log('stop tracks');
 			micSource.disconnect();
 			micSource.mediaStream.getTracks().forEach((track) => track.stop());
 			micSource = undefined;
-			audioContext.suspend();
+			audioContext?.suspend();
 		}
 
 		isRunning = false;
 	}
 
 	let lastTimestamp = 0;
+	let max = 0;
 	function render(timestamp: number) {
+		if (!audioContext || !analyzer) return;
 		if (!isRunning) return;
+		if (!canvasCtx || !canvas) return;
 
 		requestAnimationFrame(render);
 
-		if (!canvasCtx || !canvas) return;
+		if (canvas.height != analyzer.frequencyBinCount) {
+			canvas.height = analyzer.frequencyBinCount;
+		}
 
-		if (timestamp - lastTimestamp < 100) return;
+		if (timestamp - lastTimestamp < 10) return;
 		lastTimestamp = timestamp;
 
 		const bufferLength = analyzer.frequencyBinCount;
 		const dataArray = new Uint8Array(bufferLength);
 		analyzer.getByteFrequencyData(dataArray);
 
-		console.log(dataArray);
+		canvasCtx.drawImage(canvas, 1, 0);
 
-		canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-
-		const barWidth = (canvas.width / bufferLength) * 2.5;
-		let x = 0;
-
-		for (let i = 0; i < bufferLength; i++) {
-			const barHeight = dataArray[i];
-
-			canvasCtx.fillStyle = 'rgb(' + (barHeight + 100) + ',50,50)';
-			canvasCtx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
-
-			x += barWidth + 1;
+		for (let y = 0; y < bufferLength; y++) {
+			const intensity = dataArray[y];
+			canvasCtx.fillStyle = `rgb(${intensity} ${intensity} ${intensity})`;
+			canvasCtx.fillRect(0, y, 1, 1);
 		}
 	}
 
@@ -94,7 +89,7 @@
 </script>
 
 <div>
-	<canvas bind:this={canvas} width="800" height="200"></canvas>
+	<canvas bind:this={canvas} width="800" height={fftSize / 2}></canvas>
 	<div>
 		<button class="rounded border px-4 py-2" onclick={() => void start()}>Start</button>
 		<button class="rounded border px-4 py-2" onclick={() => stop()}>Stop</button>
